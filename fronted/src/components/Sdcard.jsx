@@ -1,21 +1,21 @@
 import { useGlobalContext } from "../AppContext";
 import axios from "axios";
 import React, { useEffect } from "react";
-import { useParams, Link} from "react-router-dom";
+import { useParams, Link } from "react-router-dom";
 const Sdcard = () => {
   const { list, updateState } = useGlobalContext();
   const { location } = useParams();
 
   useEffect(() => {
     getList();
-    alert(location);
   }, []);
   const getList = async () => {
     try {
       const { data } = await axios.get(
         `/api/sdcard/${location}`
-        //"/api/sdcard/" 
-        );
+        //"/api/sdcard/"
+      );
+      console.log(data);
       updateState("list", data);
     } catch (e) {
       console.log("getList error :", e);
@@ -23,6 +23,9 @@ const Sdcard = () => {
   };
   return (
     <div>
+    {list.length==0 ? "Loading..." :""} 
+    <div className="listBar" >
+      
       {list.map((file) => {
         const { name, fullPath, type, url, lastModified, size, numberOfFiles } =
           file;
@@ -39,6 +42,8 @@ const Sdcard = () => {
           </>
         );
       })}
+          </div>
+
     </div>
   );
 };

@@ -31,24 +31,101 @@ app.post("/files", (req, res) => {
 });
 
 // Get a list of files
-const getFileInfoAsync = async (filePath) => {
-  try {
-    const stats = await fspro.stat(filePath);
-    return stats;
-  } catch (error) {
-    throw error;
-  }
-};
+// const getFileInfoAsync = async (filePath) => {
+//   try {
+//     const stats = await fspro.stat(filePath);
+//     return stats;
+//   } catch (error) {
+//     throw error;
+//   }
+// };
 
 app.get("/api/sdcard/:location", async (req, res) => {
   try {
     const { location } = req.params;
     console.log(location);
 
-    const dirPath = `/sdcard${location != "undefined" ? "/" +location : ""}`; // Replace with the desired directory path
-    const files = await readdirAsync(dirPath);
+    function buildFileTree(startPath) {
+      if (!fs.existsSync(startPath)) {
+        console.log("Path does not exist:", startPath);
+        return [];
+      }
 
-    const response = await Promise.all(
+      const files = fs.readdirSync(startPath);
+      const tree = [];
+
+      for (const file of files) {
+        const currentPath = path.join(startPath, file);
+        const stat = fs.statSync(currentPath);
+
+        let node;
+        if (stat.isDirectory()) {
+          node = {
+            name: file,
+            type: "folder",
+            url: `${url}${currentPath}`,
+            fullPath: currentPath,
+            numberOfFiles: stat.size,
+            lastModified: stat.mtime,
+            children: [],
+          };
+        } else {
+          node = {
+            name: file,
+            type: "file",
+            url: `${url}${currentPath}`,
+            fullPath: currentPath,
+            size: stat.size,
+            lastModified: stat.mtime,
+          };
+        }
+
+        if (stat.isDirectory()) {
+          // Recursively build tree for subdirectories
+          node.children = buildFileTree(currentPath);
+        }
+
+        tree.push(node);
+      }
+
+      return tree;
+    }
+    // Example usage:
+    const url = `http://localhost:5003`;
+    const startPath = "/sdcard";
+    const fileTree = await buildFileTree(startPath);
+
+    console.log("make tree complete ");
+
+    /*  function searchFileOrFolder(startPath, targetName) {
+      if (!fs.existsSync(startPath)) {
+        console.log("Path does not exist:", startPath);
+        return;
+      }
+
+      const files = fs.readdirSync(startPath);
+
+      for (const file of files) {
+        const currentPath = path.join(startPath, file);
+        const stat = fs.statSync(currentPath);
+
+        if (stat.isDirectory()) {
+          // Recursively search in subdirectories
+          searchFileOrFolder(currentPath, targetName);
+        } else if (file === targetName) {
+          console.log("Found:", currentPath);
+        }
+      }
+    }
+
+    // Example usage:
+    const startPath = "/sdcard";
+    const targetName = "nandani.db";
+
+    searchFileOrFolder(startPath, targetName);
+*/
+
+    /*    const response = await Promise.all(
       files.map(async (fileOrFolder) => {
         const targetPath = `${dirPath}/${fileOrFolder}`;
         const url = `http://localhost:5003`;
@@ -81,9 +158,9 @@ app.get("/api/sdcard/:location", async (req, res) => {
           };
         }
       })
-    );
+    );*/
 
-    res.send(response);
+    res.send(fileTree);
   } catch (e) {
     console.error(e);
     res.status(500).send(e);
