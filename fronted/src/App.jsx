@@ -8,7 +8,6 @@ import Home from "./components/Home";
 function App() {
   return (
     <>
-      <h1>Files Manager</h1>
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/sdcard/:location?" element={<Sdcard />} />

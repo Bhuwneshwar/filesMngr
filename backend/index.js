@@ -11,12 +11,13 @@ const path = require("path");
 const app = express();
 app.use(express.json());
 app.use(fileUpload());
-app.use("/sdcard", express.static("/sdcard"));
+app.use("/sdcard", express.static("C:/Users/Krabi/OneDrive/Desktop"));
 //app.use('/uploads', express.static('uploads'))
 app.use(express.static(path.join(__dirname, "public")));
 //
 // Create a new file
 app.post("/files", (req, res) => {
+  console.log({ req });
   const file = req.files.file;
   const filename = file.name;
   const filePath = path.join(__dirname, "uploads", filename);
@@ -40,59 +41,61 @@ app.post("/files", (req, res) => {
 //   }
 // };
 
+const url = `http://localhost:5003`;
+
+function buildFileTree(startPath) {
+  if (!fs.existsSync(startPath)) {
+    console.log("Path does not exist:", startPath);
+    return [];
+  }
+
+  const files = fs.readdirSync(startPath);
+  const tree = [];
+
+  for (const file of files) {
+    const currentPath = path.join(startPath, file);
+    const stat = fs.statSync(currentPath);
+
+    let node;
+    if (stat.isDirectory()) {
+      node = {
+        name: file,
+        type: "folder",
+        url: `${url}${currentPath}`,
+        fullPath: currentPath,
+        numberOfFiles: stat.size,
+        lastModified: stat.mtime,
+        children: [],
+      };
+    } else {
+      node = {
+        name: file,
+        type: "file",
+        url: `${url}${currentPath}`,
+        fullPath: currentPath,
+        size: stat.size,
+        lastModified: stat.mtime,
+      };
+    }
+
+    if (stat.isDirectory()) {
+      // Recursively build tree for subdirectories
+      node.children = buildFileTree(currentPath);
+    }
+
+    tree.push(node);
+  }
+
+  return tree;
+}
+
 app.get("/api/sdcard/:location", async (req, res) => {
   try {
     const { location } = req.params;
-    console.log(location);
+    console.log({ location });
 
-    function buildFileTree(startPath) {
-      if (!fs.existsSync(startPath)) {
-        console.log("Path does not exist:", startPath);
-        return [];
-      }
-
-      const files = fs.readdirSync(startPath);
-      const tree = [];
-
-      for (const file of files) {
-        const currentPath = path.join(startPath, file);
-        const stat = fs.statSync(currentPath);
-
-        let node;
-        if (stat.isDirectory()) {
-          node = {
-            name: file,
-            type: "folder",
-            url: `${url}${currentPath}`,
-            fullPath: currentPath,
-            numberOfFiles: stat.size,
-            lastModified: stat.mtime,
-            children: [],
-          };
-        } else {
-          node = {
-            name: file,
-            type: "file",
-            url: `${url}${currentPath}`,
-            fullPath: currentPath,
-            size: stat.size,
-            lastModified: stat.mtime,
-          };
-        }
-
-        if (stat.isDirectory()) {
-          // Recursively build tree for subdirectories
-          node.children = buildFileTree(currentPath);
-        }
-
-        tree.push(node);
-      }
-
-      return tree;
-    }
     // Example usage:
-    const url = `http://localhost:5003`;
-    const startPath = "/sdcard";
+    const startPath = "C:/Users/Krabi/OneDrive/Desktop";
     const fileTree = await buildFileTree(startPath);
 
     console.log("make tree complete ");
