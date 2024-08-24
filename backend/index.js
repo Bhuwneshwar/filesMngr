@@ -1,49 +1,136 @@
 const express = require("express");
-const fileUpload = require("express-fileupload");
 const fs = require("fs");
 const fspro = require("fs").promises;
 const util = require("util");
 const readdirAsync = util.promisify(fs.readdir);
 const statAsync = util.promisify(fs.stat);
-
+const multer = require("multer");
 const path = require("path");
+const bodyParser = require("body-parser");
+const crypto = require("crypto");
+const mime = require("mime-types");
+const os = require("os");
+const { exec } = require("child_process");
 
 const app = express();
 app.use(express.json());
-app.use(fileUpload());
-app.use("/sdcard", express.static("C:/Users/Krabi/OneDrive/Desktop"));
-//app.use('/uploads', express.static('uploads'))
-app.use(express.static(path.join(__dirname, "public")));
-//
-// Create a new file
-app.post("/files", (req, res) => {
-  console.log({ req });
-  const file = req.files.file;
-  const filename = file.name;
-  const filePath = path.join(__dirname, "uploads", filename);
-  file.mv(filePath, (err) => {
-    if (err) {
-      console.error(err);
-      res.status(500).send(err);
+app.use(
+  bodyParser.urlencoded({
+    extended: true,
+  })
+);
+
+const port = process.env.PORT || 5003;
+let osName;
+let sharedIpAddress = "http://localhost";
+
+function detectOS() {
+  const platform = os.platform();
+  osName = platform;
+  console.log({ osName });
+
+  switch (platform) {
+    case "win32":
+      console.log("Operating System: Windows");
+      break;
+    case "linux":
+      console.log("Operating System: Linux");
+      break;
+    case "darwin":
+      console.log("Operating System: macOS");
+      break;
+    default:
+      console.log("Operating System: Unknown");
+  }
+}
+
+function getAvailableDrivesInWindows(callback) {
+  exec("wmic logicaldisk get name", (error, stdout, stderr) => {
+    if (error) {
+      console.error(`exec error: ${error}`);
+      return callback(error, null);
+    }
+    // console.log({ stdout });
+
+    // Split the output by newlines and filter out any empty lines
+    const drives = stdout
+      .split("\n")
+      .map((line) => line.trim()) // Trim whitespace from each line
+      .filter((line) => /^[A-Z]:$/i.test(line)); // Only keep valid drive letters
+
+    callback(null, drives);
+  });
+}
+
+function getAvailableDrivesInLinux(callback) {
+  exec("ls /storage", (error, stdout, stderr) => {
+    if (error) {
+      console.error(`exec error: ${error}`);
+      return callback(error, null);
+    }
+
+    // Split the output by newlines and filter out any empty lines
+    const drives = stdout
+      .split("\n")
+      .map((line) => line.trim()) // Trim whitespace from each line
+      .filter((line) => line !== "" && line !== "self"); // Filter out any non-storage directories
+
+    callback(null, drives);
+  });
+}
+
+detectOS();
+
+if (osName === "win32") {
+  getAvailableDrivesInWindows((error, drives) => {
+    if (error) {
+      console.error("Failed to get drives:", error);
     } else {
-      res.send("File uploaded successfully");
+      console.log("Available drives:", drives);
+      drives.forEach((drive) => {
+        app.use("/" + drive + "/", express.static(drive + "/")); // This assumes your drives are mounted at the root level
+      });
     }
   });
-});
+}
+if (osName === "linux") {
+  getAvailableDrivesInLinux((error, drives) => {
+    if (error) {
+      console.error("Failed to get drives:", error);
+    } else {
+      console.log("Available drives:", drives);
+      drives.forEach((drive) => {
+        app.use("/" + drive, express.static("/" + drive)); // Serve each drive's contents
+      });
+    }
+  });
+}
 
-// Get a list of files
-// const getFileInfoAsync = async (filePath) => {
-//   try {
-//     const stats = await fspro.stat(filePath);
-//     return stats;
-//   } catch (error) {
-//     throw error;
-//   }
-// };
+function getIPAddresses() {
+  const interfaces = os.networkInterfaces();
+  const addresses = [];
 
-const url = `http://localhost:5003`;
+  for (const interfaceName in interfaces) {
+    const interfaceInfo = interfaces[interfaceName];
 
-function buildFileTree(startPath) {
+    for (const i of interfaceInfo) {
+      // Check if the interface has an IPv4 or IPv6 address and is not an internal (localhost) interface
+      if (i.family === "IPv4" || i.family === "IPv6") {
+        if (!i.internal) {
+          addresses.push({ interface: interfaceName, address: i.address });
+        }
+      }
+    }
+  }
+
+  return addresses;
+}
+
+const ipAddresses = getIPAddresses();
+console.log("Available IP addresses:", ipAddresses);
+sharedIpAddress = `http://${ipAddresses[5].address}:${port}`;
+
+function buildFileTree(startPath, res) {
   if (!fs.existsSync(startPath)) {
     console.log("Path does not exist:", startPath);
     return [];
@@ -61,206 +148,204 @@ function buildFileTree(startPath) {
       node = {
         name: file,
         type: "folder",
-        url: `${url}${currentPath}`,
+        url: `${sharedIpAddress}${currentPath}`,
         fullPath: currentPath,
         numberOfFiles: stat.size,
         lastModified: stat.mtime,
         children: [],
       };
+      node.children = buildFileTree(currentPath);
     } else {
       node = {
         name: file,
         type: "file",
-        url: `${url}${currentPath}`,
+        url: `${sharedIpAddress}${currentPath}`,
         fullPath: currentPath,
         size: stat.size,
         lastModified: stat.mtime,
       };
     }
 
-    if (stat.isDirectory()) {
-      // Recursively build tree for subdirectories
-      node.children = buildFileTree(currentPath);
-    }
-
-    tree.push(node);
+    // tree.push(node);
+    res.write(JSON.stringify(node));
+    console.log(node.name);
   }
-
+  res.end();
   return tree;
 }
 
-app.get("/api/sdcard/:location", async (req, res) => {
+app.get("/api/v1/", async (req, res) => {
   try {
-    const { location } = req.params;
-    console.log({ location });
+    if (osName === "win32") {
+      getAvailableDrivesInWindows((error, drives) => {
+        if (error) {
+          console.error("Failed to get drives:", error);
+        } else {
+          console.log("Available drives:", drives);
+          res.send({ drives });
+        }
+      });
+    }
+    if (osName === "linux") {
+      getAvailableDrivesInLinux((error, drives) => {
+        if (error) {
+          console.error("Failed to get drives:", error);
+        } else {
+          console.log("Available drives:", drives);
+          res.send({ drives });
+        }
+      });
+    }
+  } catch (error) {
+    console.log("Error: ", error);
+  }
+});
+// Example usage:
 
-    // Example usage:
-    const startPath = "C:/Users/Krabi/OneDrive/Desktop";
-    const fileTree = await buildFileTree(startPath);
+app.get("/api/v1/drive/:drive", async (req, res) => {
+  try {
+    const drive = req.params.drive;
+    const query = req.query;
+    console.log({ drive }, "drive");
+    console.log({ query }, "query");
 
-    console.log("make tree complete ");
+    let levels = "";
+    for (const level in query) {
+      console.log({ level });
+      levels = path.join(levels, query[level]);
+    }
+    console.log({ levels });
 
-    /*  function searchFileOrFolder(startPath, targetName) {
-      if (!fs.existsSync(startPath)) {
-        console.log("Path does not exist:", startPath);
-        return;
-      }
+    const directoryPath = path.join(drive, "/", levels);
+    console.log({ directoryPath });
+    // app.use(directoryPath, express.static(directoryPath)); // This assumes your drives are mounted at the root level
 
-      const files = fs.readdirSync(startPath);
+    const baseUrl = `${sharedIpAddress}/drive/${drive}`;
+    const files = await fspro.readdir(directoryPath);
+    console.log({ files }, "files");
 
-      for (const file of files) {
-        const currentPath = path.join(startPath, file);
+    const items = [];
+    for (const file of files) {
+      const currentPath = path.join(directoryPath, file);
+      console.log({ currentPath });
+
+      try {
         const stat = fs.statSync(currentPath);
 
+        let node;
         if (stat.isDirectory()) {
-          // Recursively search in subdirectories
-          searchFileOrFolder(currentPath, targetName);
-        } else if (file === targetName) {
-          console.log("Found:", currentPath);
-        }
-      }
-    }
-
-    // Example usage:
-    const startPath = "/sdcard";
-    const targetName = "nandani.db";
-
-    searchFileOrFolder(startPath, targetName);
-*/
-
-    /*    const response = await Promise.all(
-      files.map(async (fileOrFolder) => {
-        const targetPath = `${dirPath}/${fileOrFolder}`;
-        const url = `http://localhost:5003`;
-        const stats = await statAsync(targetPath);
-
-        if (stats.isFile()) {
-          return {
-            name: fileOrFolder,
-            type: "file",
-            url: `${url}${dirPath}/${fileOrFolder}`,
-            fullPath: targetPath,
-            size: stats.size,
-            lastModified: stats.mtime,
-          };
-        } else if (stats.isDirectory()) {
-          return {
-            name: fileOrFolder,
+          node = {
+            name: file,
             type: "folder",
-            url: `${url}/sdcard/${fileOrFolder}`,
-            fullPath: targetPath,
-            numberOfFiles: stats.size,
-            lastModified: stats.mtime,
+            url: `${baseUrl}/${levels}/${file}`,
+            fullPath: currentPath,
+            numberOfFiles: fs.readdirSync(currentPath).length,
+            lastModified: stat.mtime,
           };
         } else {
-          return {
-            name: fileOrFolder,
-            type: "other",
-            url: `${url}/sdcard/${fileOrFolder}`,
-            fullPath: targetPath,
+          const mimeType =
+            mime.lookup(currentPath) || "application/octet-stream";
+
+          node = {
+            name: file,
+            type: "file",
+            mimeType: mimeType,
+            url: `${baseUrl}/${levels}/${file}`,
+            fullPath: currentPath,
+            size: stat.size,
+            serverUrl: sharedIpAddress,
+            lastModified: stat.mtime,
           };
         }
-      })
-    );*/
+        items.push(node);
+      } catch (error) {
+        console.log(error);
+      }
+    }
 
-    res.send(fileTree);
-  } catch (e) {
-    console.error(e);
-    res.status(500).send(e);
+    res.send({ items });
+  } catch (error) {
+    console.log("error in read directory", error);
+    res.status(500).send("Error reading directory");
   }
 });
 
-app.get("/api/sdcar", async (req, res) => {
-  try {
-    // const dirPath = path.join(__dirname, "uploads");
-    //   fs.readdir(dirPath, (err, files) => {
-    let content;
-    fs.readdir("/sdcard", (err, files) => {
+// Set storage engine
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const drive = req.params.drive;
+    const query = req.query;
+    console.log({ drive }, "drive");
+    console.log({ query }, "query");
+
+    let levels = "";
+    for (const level in query) {
+      console.log({ level });
+      levels = path.join(levels, query[level]);
+    }
+    console.log({ levels });
+
+    directoryPath = path.join(drive, "/", levels);
+    console.log({ directoryPath });
+
+    // Example: Dynamically setting the path based on a field in the request body
+    const dynamicPath = directoryPath || "./uploads"; // Use './uploads' if no dynamicPath is provided
+
+    // Make sure the directory exists, or create it
+    fs.mkdir(dynamicPath, { recursive: true }, (err) => {
       if (err) {
-        console.error(err);
-        res.status(500).send(err);
-      } else {
-        //return res.downloadFile("/sdcard/IMG_20230301_190039_520.jpg");
-
-        // Async function to get information about a file or folder
-
-        // Usage example:
-        content = files;
+        return cb(err, dynamicPath);
       }
+      cb(null, dynamicPath);
     });
+  },
+  filename: function (req, file, cb) {
+    cb(
+      null,
+      // file.originalname + "-" + Date.now() + path.extname(file.originalname)
+      file.originalname
+    );
+  },
+});
 
-    let response = [];
-    await content.forEach(async (fileOrFolder) => {
-      const targetPath = "/sdcard/" + fileOrFolder; // Replace with the file or folder path you want to get info about
+// Initialize upload
+const upload = multer({
+  storage: storage,
+  limits: { fileSize: 10 * 1024 * 1024 * 1024 }, // 10 GB limit per file
+}).array("files", 100); // Accept up to 100 files at once
 
-      const stats = await getFileInfoAsync(targetPath);
+app.post("/api/v1/copy-files/drive/:drive", (req, res) => {
+  try {
+    upload(req, res, (err) => {
+      if (err) {
+        console.log(err);
 
-      if (stats.isFile()) {
-        console.log("File Info:");
-        console.log("File Size:", stats.size, "bytes");
-        console.log("Last Modified:", stats.mtime);
-        response.push({
-          name: fileOrFolder,
-          type: "file",
-          url: "http://localhost:5003/sdcard/" + fileOrFolder,
-          fullPath: "/sdcard/" + fileOrFolder,
-        });
-      } else if (stats.isDirectory()) {
-        console.log("Directory Info:");
-        console.log("Number of Files:", stats.size);
-        console.log("Last Modified:", stats.mtime);
-        response.push({
-          name: fileOrFolder,
-          type: "folder",
-          url: "http://localhost:5003/sdcard/" + fileOrFolder,
-          fullPath: "/sdcard/" + fileOrFolder,
-        });
-      } else {
-        console.log("Not a file or folder");
-        response.push({
-          name: fileOrFolder,
-          type: "other",
-          url: "http://localhost:5003/sdcard/" + fileOrFolder,
-          fullPath: "/sdcard/" + fileOrFolder,
-        });
+        return res.status(500).json({ message: "Upload failed", error: err });
       }
+      res
+        .status(200)
+        .json({ message: "Files uploaded successfully", files: req.files });
     });
-    res.send(response);
-  } catch (e) {
-    console.log(e);
+  } catch (error) {
+    console.log(error);
+    res.status(501);
   }
 });
 
-// Serve static files from the 'public' folder
+app.get(
+  "/api/v1/search-all-types-files-recursively",
+  async function (req, res) {
+    try {
+      res.setHeader("Content-Type", "text/plain");
 
-app.get("/api/files", (req, res) => {
-  // const dirPath = path.join(__dirname, "uploads");
-  //   fs.readdir(dirPath, (err, files) => {
-  fs.readdir("/sdcard", (err, files) => {
-    if (err) {
-      console.error(err);
-      res.status(500).send(err);
-    } else {
-      res.send(files);
+      const startPath = "C:/Users/Krabi/OneDrive/Desktop";
+      buildFileTree(startPath, res);
+    } catch (error) {
+      console.log(error);
     }
-  });
-});
+  }
+);
 
-// Delete a file
-app.delete("/files/:filename", (req, res) => {
-  const filename = req.params.filename;
-  const filePath = path.join(__dirname, "uploads", filename);
-  fs.unlink(filePath, (err) => {
-    if (err) {
-      console.error(err);
-      res.status(500).send(err);
-    } else {
-      res.send("File deleted successfully");
-    }
-  });
-});
-
-const port = process.env.PORT || 5003;
 app.listen(port, () =>
-  console.log(`Server running on port http://localhost:${port}`)
+  console.log(`Server running on port ${sharedIpAddress}`)
 );
