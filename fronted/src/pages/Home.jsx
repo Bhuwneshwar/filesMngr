@@ -20,7 +20,6 @@ function Home() {
   return (
     <>
       <h2>Home</h2>
-      <Link to="/sdcard">Sdcard</Link>{" "}
       <div className="drives">
         {drives.map((drive, i) => (
           <Link className="drive" key={i} to={"drive/" + drive}>

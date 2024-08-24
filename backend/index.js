@@ -192,7 +192,7 @@ app.get("/api/v1/", async (req, res) => {
           console.error("Failed to get drives:", error);
         } else {
           console.log("Available drives:", drives);
-          res.send({ drives });
+          res.send({ drives: [...drives, "sdcard"] });
         }
       });
     }
@@ -345,6 +345,11 @@ app.get(
     }
   }
 );
+app.use(express.static(path.resolve("./fronted/dist")));
+
+app.get("*", (req, res) => {
+  res.sendFile(path.resolve("./fronted/dist/index.html"));
+});
 
 app.listen(port, () =>
   console.log(`Server running on port ${sharedIpAddress}`)
